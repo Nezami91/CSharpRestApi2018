@@ -12,7 +12,10 @@ namespace CustomerAppBLL.Services
     class CustomerService : ICustomerService
     {
         CustomerConverter conv = new CustomerConverter();
+        AddressConverter aConv = new AddressConverter();
         DALFacade facade;
+     
+
         public CustomerService(DALFacade facade)
         {
             this.facade = facade;
@@ -40,9 +43,29 @@ namespace CustomerAppBLL.Services
 
         public CustomerBO Get(int Id)
         {
+
             using (var uow = facade.UnitOfWork)
 			{
-				return conv.Convert(uow.CustomerRepository.Get(Id));
+                //1. Get and convert the customer
+                var cust = conv.Convert(uow.CustomerRepository.Get(Id));
+
+                if (cust.AddressIds != null)
+                {
+                    //2. Get All related Addresses from AddressRepository using addressIds
+                    //3. Convert and Add the Addresses to the CustomerBO
+                    //cust.Addresses = cust.AddressIds.
+                    //    Select(id => aConv.Convert(uow.AddressRepository
+                    //    .Get(id))).ToList();
+
+                    cust.Addresses = uow.AddressRepository
+                        .GetAllById(cust.AddressIds)
+                        .Select(a => aConv.Convert(a))
+                        .ToList();
+                }
+
+
+                //4. Return the Customer
+                return cust;
 			}
         }
 
@@ -65,10 +88,28 @@ namespace CustomerAppBLL.Services
 				{
 					throw new InvalidOperationException("Customer not found");
 				}
+                var customerUpdated = conv.Convert(cust);
+				customerFromDb.FirstName = customerUpdated.FirstName;
+				customerFromDb.LastName = customerUpdated.LastName;
+				customerFromDb.Addresses = customerUpdated.Addresses;
 
-				customerFromDb.FirstName = cust.FirstName;
-				customerFromDb.LastName = cust.LastName;
-				customerFromDb.Address = cust.Address;
+                //1. Remove All, except the "old" ids we wanna keep (Avoid attached issues)
+                customerFromDb.Addresses.RemoveAll(
+                    ca => !customerUpdated.Addresses.Exists(
+                    a => a.AddressId == ca.AddressId && 
+                    a.CustomerId == ca.CustomerId
+                    ));
+
+                //2. Remove All ids already in database from customerUpdated(because we dont want them again)
+                customerUpdated.Addresses.RemoveAll(
+                    ca => customerFromDb.Addresses.Exists(
+                    a => a.AddressId == ca.AddressId &&
+                    a.CustomerId == ca.CustomerId));
+
+                //3. Add All new CustomerAddresses not yet seen in the DB
+                customerFromDb.Addresses.AddRange(customerUpdated.Addresses);
+
+
                 uow.Complete();
 				return conv.Convert(customerFromDb);
             }
